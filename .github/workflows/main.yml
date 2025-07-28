@@ -1,4 +1,4 @@
-name: CI
+name: KL
 
 on: [push, workflow_dispatch]
 
@@ -8,7 +8,8 @@ jobs:
 
     steps:
     - name: Download playit.gg client
-      run: Invoke-WebRequest "https://github.com/playit-cloud/playit-agent/releases/latest/download/playit.exe" -OutFile "playit.exe"
+      run: |
+        Invoke-WebRequest "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.4/playit.exe" -OutFile "playit.exe"
 
     - name: Enable Remote Desktop (RDP)
       run: |
@@ -16,16 +17,10 @@ jobs:
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
 
-    - name: Create user TranAnhKhoa (if not exists)
+    - name: Create user TranAnhKhoa
       run: |
-        $user = "TranAnhKhoa"
-        if (-not (Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
-          net user $user "AnhKhoa123@" /add
-        }
-
-    - name: Set Password for TranAnhKhoa
-      run: |
-        Set-LocalUser -Name "TranAnhKhoa" -Password (ConvertTo-SecureString -AsPlainText "AnhKhoa123@" -Force)
+        net user TranAnhKhoa "AnhKhoa123@" /add
+        net localgroup administrators TranAnhKhoa /add
 
     - name: Login to playit.gg
       run: |
