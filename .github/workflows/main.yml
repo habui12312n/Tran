@@ -24,17 +24,35 @@ jobs:
       shell: powershell
       continue-on-error: true
 
-    - name: Kiểm tra playit.gg Agent
+    - name: Kiểm tra file playit.exe
       run: |
         Write-Output "Kiểm tra file playit.exe..."
         if (Test-Path ".\playit\playit.exe") {
           Write-Output "File playit.exe tồn tại."
-          Write-Output "Kiểm tra phiên bản playit.gg agent..."
-          .\playit\playit.exe --version
-          Write-Output "Các lệnh khả dụng:"
-          .\playit\playit.exe --help
         } else {
           Write-Error "File playit.exe không tồn tại trong thư mục playit."
+          exit 1
+        }
+      shell: powershell
+
+    - name: Kiểm tra phiên bản playit.gg
+      run: |
+        try {
+          Write-Output "Kiểm tra phiên bản playit.gg agent..."
+          .\playit\playit.exe --version
+        } catch {
+          Write-Error "Lệnh --version thất bại: $_"
+          exit 1
+        }
+      shell: powershell
+
+    - name: Kiểm tra lệnh playit.gg
+      run: |
+        try {
+          Write-Output "Các lệnh khả dụng:"
+          .\playit\playit.exe --help
+        } catch {
+          Write-Error "Lệnh --help thất bại: $_"
           exit 1
         }
       shell: powershell
@@ -69,7 +87,7 @@ jobs:
           Get-Location
           Write-Output "Khởi động playit.gg agent với xác thực..."
           .\playit\playit.exe --secret "${{ secrets.PLAYIT_SECRET_KEY }}" run > tunnel_output.txt 2> tunnel_error.txt
-          Start-Sleep -Seconds 30
+          Start-Sleep -Seconds 40
           Write-Output "Đầu ra tunnel:"
           Get-Content tunnel_output.txt -ErrorAction SilentlyContinue
           Write-Output "Lỗi tunnel (nếu có):"
@@ -105,4 +123,4 @@ jobs:
       run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
 
     - name: Đặt mật khẩu người dùng cục bộ
-      run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+      run: Set-LocalUser -Name "TranAnhKhoa" -Password (ConvertTo-SecureString -AsPlainText "AnhKhoa123@" -Force)
