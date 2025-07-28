@@ -142,64 +142,93 @@ jobs:
         }
         
         try {
-          # Simple version test first
-          Write-Host "Testing playit.exe..."
-          $versionResult = Start-Process -FilePath ".\playit.exe" -ArgumentList "--version" -Wait -PassThru -NoNewWindow -RedirectStandardOutput "version.txt" -RedirectStandardError "version_err.txt"
+          # Get help to understand available commands
+          Write-Host "Getting playit.exe help..."
+          $helpResult = Start-Process -FilePath ".\playit.exe" -ArgumentList "--help" -Wait -PassThru -NoNewWindow -RedirectStandardOutput "help.txt" -RedirectStandardError "help_err.txt"
           
-          if (Test-Path "version.txt") {
-            $version = Get-Content "version.txt" -Raw
-            Write-Host "Playit version: $version"
+          if (Test-Path "help.txt") {
+            $help = Get-Content "help.txt" -Raw
+            Write-Host "Available commands and options:"
+            Write-Host $help
           }
           
-          if (Test-Path "version_err.txt") {
-            $versionErr = Get-Content "version_err.txt" -Raw
-            if ($versionErr) { Write-Host "Version stderr: $versionErr" }
+          if (Test-Path "help_err.txt") {
+            $helpErr = Get-Content "help_err.txt" -Raw
+            if ($helpErr) { Write-Host "Help stderr: $helpErr" }
           }
           
-          # Login using file input method
-          Write-Host "Creating secret file..."
-          $Env:PLAYIT_SECRET | Out-File -FilePath "secret.txt" -Encoding ASCII -NoNewline
+          # Try different authentication methods based on typical playit usage
+          Write-Host "Trying authentication methods..."
           
-          Write-Host "Attempting login..."
-          $loginResult = Start-Process -FilePath ".\playit.exe" -ArgumentList "login" -Wait -PassThru -NoNewWindow -RedirectStandardInput "secret.txt" -RedirectStandardOutput "login.txt" -RedirectStandardError "login_err.txt"
+          # Method 1: Try with --secret flag directly
+          Write-Host "Method 1: Using --secret flag..."
+          $secretResult = Start-Process -FilePath ".\playit.exe" -ArgumentList "--secret", $Env:PLAYIT_SECRET -Wait -PassThru -NoNewWindow -RedirectStandardOutput "secret1.txt" -RedirectStandardError "secret1_err.txt"
           
-          # Check login results
-          if (Test-Path "login.txt") {
-            $loginOutput = Get-Content "login.txt" -Raw
-            Write-Host "Login output: $loginOutput"
-          }
-          
-          if (Test-Path "login_err.txt") {
-            $loginError = Get-Content "login_err.txt" -Raw
-            if ($loginError) { Write-Host "Login error: $loginError" }
-          }
-          
-          if ($loginResult.ExitCode -eq 0) {
-            Write-Host "✓ Login successful"
+          if ($secretResult.ExitCode -eq 0) {
+            Write-Host "✓ Secret authentication successful"
+            $success = $true
           } else {
-            Write-Host "✗ Login failed with exit code: $($loginResult.ExitCode)"
-            
-            # Try alternative login method
-            Write-Host "Trying alternative login method..."
-            $alternativeLogin = Start-Process -FilePath ".\playit.exe" -ArgumentList "login", "--secret", $Env:PLAYIT_SECRET -Wait -PassThru -NoNewWindow -RedirectStandardOutput "alt_login.txt" -RedirectStandardError "alt_login_err.txt"
-            
-            if ($alternativeLogin.ExitCode -eq 0) {
-              Write-Host "✓ Alternative login successful"
-            } else {
-              Write-Host "✗ All login methods failed"
-              if (Test-Path "alt_login_err.txt") {
-                Get-Content "alt_login_err.txt" | Write-Host
-              }
-              exit 1
+            Write-Host "✗ Secret method failed with exit code: $($secretResult.ExitCode)"
+            if (Test-Path "secret1_err.txt") {
+              $err = Get-Content "secret1_err.txt" -Raw
+              Write-Host "Error: $err"
             }
           }
           
-          # Clean up temporary files
-          Remove-Item "secret.txt", "version.txt", "version_err.txt", "login.txt", "login_err.txt", "alt_login.txt", "alt_login_err.txt" -ErrorAction SilentlyContinue
+          # Method 2: Try auth command
+          if (-not $success) {
+            Write-Host "Method 2: Trying 'auth' command..."
+            $authResult = Start-Process -FilePath ".\playit.exe" -ArgumentList "auth", $Env:PLAYIT_SECRET -Wait -PassThru -NoNewWindow -RedirectStandardOutput "auth.txt" -RedirectStandardError "auth_err.txt"
+            
+            if ($authResult.ExitCode -eq 0) {
+              Write-Host "✓ Auth command successful"
+              $success = $true
+            } else {
+              Write-Host "✗ Auth method failed"
+              if (Test-Path "auth_err.txt") {
+                $err = Get-Content "auth_err.txt" -Raw
+                Write-Host "Error: $err"
+              }
+            }
+          }
+          
+          # Method 3: Try setup command
+          if (-not $success) {
+            Write-Host "Method 3: Trying 'setup' command..."
+            $setupResult = Start-Process -FilePath ".\playit.exe" -ArgumentList "setup" -Wait -PassThru -NoNewWindow -RedirectStandardInput "secret.txt" -RedirectStandardOutput "setup.txt" -RedirectStandardError "setup_err.txt"
+            
+            if ($setupResult.ExitCode -eq 0) {
+              Write-Host "✓ Setup command successful"
+              $success = $true
+            }
+          }
+          
+          # Method 4: Try running without auth (some versions auto-authenticate)
+          if (-not $success) {
+            Write-Host "Method 4: Testing direct execution..."
+            $directResult = Start-Process -FilePath ".\playit.exe" -ArgumentList "tunnel", "tcp", "3389" -Wait -PassThru -NoNewWindow -RedirectStandardOutput "direct.txt" -RedirectStandardError "direct_err.txt" -TimeoutMilliseconds 5000
+            
+            if (Test-Path "direct_err.txt") {
+              $directErr = Get-Content "direct_err.txt" -Raw
+              if ($directErr -notmatch "authentication|login|secret") {
+                Write-Host "✓ Direct execution seems to work"
+                $success = $true
+              }
+            }
+          }
+          
+          # Create secret file for later use
+          $Env:PLAYIT_SECRET | Out-File -FilePath "secret.txt" -Encoding ASCII -NoNewline
+          
+          if (-not $success) {
+            Write-Host "All authentication methods failed. Will try to run directly in serve step."
+          } else {
+            Write-Host "Authentication completed successfully"
+          }
           
         } catch {
           Write-Host "Login process error: $_"
-          exit 1
+          Write-Host "Will attempt to continue with direct execution"
         }
       env:
         PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
@@ -214,18 +243,85 @@ jobs:
         Write-Host "User: $env:USERNAME"
         Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike "127.*"} | Select-Object IPAddress, InterfaceAlias
         
-        # Start tunnel in background with logging
+        # Try different ways to start the tunnel based on playit.exe syntax
         try {
-          Write-Host "Starting playit serve..."
-          .\playit.exe serve 2>&1 | Tee-Object -FilePath "playit.log"
+          Write-Host "Method 1: Direct tunnel with secret..."
+          
+          # Try with secret as environment variable or parameter
+          $env:PLAYIT_SECRET = $Env:PLAYIT_SECRET
+          
+          # Common playit.exe patterns for tunneling
+          $tunnelMethods = @(
+            @("--secret", $Env:PLAYIT_SECRET, "tunnel", "tcp", "3389"),
+            @("--secret", $Env:PLAYIT_SECRET, "tcp", "3389"),
+            @("tunnel", "tcp", "3389", "--secret", $Env:PLAYIT_SECRET),
+            @("tcp", "3389", "--secret", $Env:PLAYIT_SECRET),
+            @("--secret", $Env:PLAYIT_SECRET),
+            @("serve", "--secret", $Env:PLAYIT_SECRET),
+            @("start", "--secret", $Env:PLAYIT_SECRET)
+          )
+          
+          $success = $false
+          foreach ($method in $tunnelMethods) {
+            Write-Host "Trying: .\playit.exe $($method -join ' ')"
+            
+            # Start process in background to test
+            $testProcess = Start-Process -FilePath ".\playit.exe" -ArgumentList $method -PassThru -NoNewWindow -RedirectStandardOutput "test_output.txt" -RedirectStandardError "test_error.txt"
+            
+            # Wait a bit to see if it starts successfully
+            Start-Sleep -Seconds 3
+            
+            if (-not $testProcess.HasExited) {
+              Write-Host "✓ Method successful! Process started with PID: $($testProcess.Id)"
+              
+              # Check output for tunnel URL
+              if (Test-Path "test_output.txt") {
+                $output = Get-Content "test_output.txt" -Raw
+                Write-Host "Output: $output"
+                if ($output -match "https://.*playit\.gg" -or $output -match "tunnel.*started" -or $output -match "listening") {
+                  Write-Host "✓ Tunnel appears to be running!"
+                  $success = $true
+                  break
+                }
+              }
+              
+              # Kill test process and try the method for real
+              $testProcess.Kill()
+            } else {
+              Write-Host "✗ Method failed"
+              if (Test-Path "test_error.txt") {
+                $error = Get-Content "test_error.txt" -Raw
+                if ($error) { Write-Host "Error: $error" }
+              }
+            }
+            
+            Remove-Item "test_output.txt", "test_error.txt" -ErrorAction SilentlyContinue
+          }
+          
+          if ($success) {
+            Write-Host "Starting tunnel with successful method..."
+            $finalProcess = Start-Process -FilePath ".\playit.exe" -ArgumentList $method -PassThru -NoNewWindow
+            Write-Host "Tunnel started with PID: $($finalProcess.Id)"
+          } else {
+            Write-Host "All tunnel methods failed. Trying interactive mode..."
+            
+            # Try interactive mode
+            Write-Host "Starting interactive playit..."
+            Start-Process -FilePath ".\playit.exe" -NoNewWindow
+          }
+          
         } catch {
           Write-Host "Error starting tunnel: $_"
-          if (Test-Path "playit.log") {
-            Write-Host "Playit log contents:"
-            Get-Content "playit.log"
-          }
-          exit 1
+          Write-Host "Attempting basic execution..."
+          Start-Process -FilePath ".\playit.exe" -NoNewWindow
         }
+        
+        # Wait and show status
+        Start-Sleep -Seconds 5
+        Write-Host "Checking running processes..."
+        Get-Process -Name "*playit*" -ErrorAction SilentlyContinue | Format-Table
+      env:
+        PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
         
     - name: Keep alive
       run: |
