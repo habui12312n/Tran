@@ -44,8 +44,10 @@ jobs:
       run: |
         # Kiểm tra file playit.exe trước khi sử dụng
         if (Test-Path "playit.exe") {
+          # Ghi secret vào file
           echo $Env:PLAYIT_SECRET | Out-File -Encoding ASCII secret.txt
-          .\playit.exe login < secret.txt
+          # Sử dụng Get-Content và pipe thay vì input redirection
+          Get-Content secret.txt | .\playit.exe login
         } else {
           Write-Host "playit.exe not found!"
           exit 1
