@@ -38,20 +38,38 @@ jobs:
           exit 1
         }
       shell: powershell
-      continue-on-error: true
+
+    - name: Kiểm tra Secret Key
+      run: |
+        if (-not "${{ secrets.PLAYIT_SECRET_KEY }}") {
+          Write-Error "PLAYIT_SECRET_KEY không được thiết lập trong GitHub Secrets. Vui lòng thêm key từ https://playit.gg/account."
+          exit 1
+        } else {
+          Write-Output "PLAYIT_SECRET_KEY đã được thiết lập."
+        }
+      shell: powershell
+      env:
+        PLAYIT_SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
+
+    - name: Kiểm tra trạng thái dịch vụ playit.gg
+      run: |
+        try {
+          Write-Output "Kiểm tra trạng thái dịch vụ playit.gg..."
+          $status = Invoke-WebRequest -Uri "https://status.playit.gg" -ErrorAction Stop
+          Write-Output "Trạng thái dịch vụ: $($status.StatusDescription)"
+        } catch {
+          Write-Warning "Không thể kiểm tra trạng thái dịch vụ playit.gg: $_"
+        }
+      shell: powershell
 
     - name: Xác thực và khởi động Tunnel
       run: |
         try {
+          Write-Output "Thư mục làm việc hiện tại:"
+          Get-Location
           Write-Output "Khởi động playit.gg agent với xác thực..."
-          Start-Job -Name PlayitJob -ScriptBlock {
-            $env:PLAYIT_SECRET_KEY = "${{ secrets.PLAYIT_SECRET_KEY }}"
-            Start-Process -FilePath ".\playit\playit.exe" -ArgumentList "--secret $env:PLAYIT_SECRET_KEY run" -NoNewWindow -RedirectStandardOutput "tunnel_output.txt" -RedirectStandardError "tunnel_error.txt"
-          } | Out-Null
-          Start-Sleep -Seconds 20
-          Write-Output "Kiểm tra trạng thái job..."
-          $job = Get-Job -Name PlayitJob
-          Write-Output "Trạng thái job: $($job.State)"
+          .\playit\playit.exe --secret "${{ secrets.PLAYIT_SECRET_KEY }}" run > tunnel_output.txt 2> tunnel_error.txt
+          Start-Sleep -Seconds 30
           Write-Output "Đầu ra tunnel:"
           Get-Content tunnel_output.txt -ErrorAction SilentlyContinue
           Write-Output "Lỗi tunnel (nếu có):"
