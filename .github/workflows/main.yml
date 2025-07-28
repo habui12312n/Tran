@@ -8,13 +8,20 @@ jobs:
 
     steps:
     - name: Download playit.gg client
-      run: Invoke-WebRequest "https://playit.gg/downloads/playit-windows.exe" -OutFile "playit.exe"
+      run: Invoke-WebRequest "https://github.com/playit-cloud/playit-agent/releases/latest/download/playit.exe" -OutFile "playit.exe"
 
     - name: Enable Remote Desktop (RDP)
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+
+    - name: Create user TranAnhKhoa (if not exists)
+      run: |
+        $user = "TranAnhKhoa"
+        if (-not (Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
+          net user $user "AnhKhoa123@" /add
+        }
 
     - name: Set Password for TranAnhKhoa
       run: |
