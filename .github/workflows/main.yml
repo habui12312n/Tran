@@ -8,18 +8,17 @@ jobs:
 
     steps:
     - name: Download playit.gg client
-      run: Invoke-WebRequest https://playit-cloud-client.releases.playit.gg/windows/playit.exe -OutFile playit.exe
-
-    - name: Create user TranAnhKhoa and set password
-      run: |
-        net user TranAnhKhoa "AnhKhoa123@" /add
-        net localgroup "Remote Desktop Users" TranAnhKhoa /add
+      run: Invoke-WebRequest "https://playit.gg/downloads/playit-windows.exe" -OutFile "playit.exe"
 
     - name: Enable Remote Desktop (RDP)
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+
+    - name: Set Password for TranAnhKhoa
+      run: |
+        Set-LocalUser -Name "TranAnhKhoa" -Password (ConvertTo-SecureString -AsPlainText "AnhKhoa123@" -Force)
 
     - name: Login to playit.gg
       run: |
