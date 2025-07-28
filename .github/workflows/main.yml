@@ -8,10 +8,19 @@ jobs:
 
     steps:
     - name: Download playit.gg Agent
-      run: Invoke-WebRequest https://playit.gg/downloads/playit-win-64.exe -OutFile playit.exe
+      run: |
+        try {
+          Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.0/playit-windows-x86_64.exe" -OutFile "playit.exe" -ErrorAction Stop
+        } catch {
+          Write-Error "Failed to download playit.gg agent. Please verify the URL at https://github.com/playit-cloud/playit-agent/releases or https://playit.gg/download."
+          exit 1
+        }
+      shell: powershell
 
     - name: Move playit executable
-      run: Move-Item -Path playit.exe -Destination .\playit\playit.exe
+      run: |
+        New-Item -ItemType Directory -Path ".\playit" -Force
+        Move-Item -Path "playit.exe" -Destination ".\playit\playit.exe" -Force
       shell: powershell
       continue-on-error: true
 
