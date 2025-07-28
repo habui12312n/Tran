@@ -7,25 +7,94 @@ jobs:
     steps:
     - name: Download playit.gg client
       run: |
+        Write-Host "Downloading playit.gg client..."
+        $success = $false
+        
+        # Method 1: Try GitHub releases first (more reliable)
         try {
-          Write-Host "Downloading playit.gg client..."
-          Invoke-WebRequest -Uri "https://playit-cloud-client.releases.playit.gg/windows/playit.exe" -OutFile "playit.exe" -UseBasicParsing
+          Write-Host "Method 1: GitHub releases..."
+          # Get latest release info
+          $apiUrl = "https://api.github.com/repos/playit-cloud/playit-agent/releases/latest"
+          $headers = @{'User-Agent' = 'GitHub-Actions'; 'Accept' = 'application/vnd.github.v3+json'}
+          $release = Invoke-RestMethod -Uri $apiUrl -Headers $headers
           
-          # Verify download
-          if (Test-Path "playit.exe") {
-            $fileInfo = Get-Item "playit.exe"
-            Write-Host "Downloaded file size: $($fileInfo.Length) bytes"
-            if ($fileInfo.Length -lt 1000) {
-              throw "Downloaded file too small, likely invalid"
+          # Find Windows executable
+          $windowsAsset = $release.assets | Where-Object { 
+            $_.name -match "playit.*\.exe$" -or 
+            $_.name -match "windows.*\.exe$" -or 
+            $_.name -eq "playit.exe"
+          } | Select-Object -First 1
+          
+          if ($windowsAsset) {
+            Write-Host "Found asset: $($windowsAsset.name) ($($windowsAsset.size) bytes)"
+            Write-Host "Download URL: $($windowsAsset.browser_download_url)"
+            
+            Invoke-WebRequest -Uri $windowsAsset.browser_download_url -OutFile "playit.exe" -UseBasicParsing -Headers @{'Accept' = 'application/octet-stream'}
+            
+            if ((Get-Item "playit.exe" -ErrorAction SilentlyContinue)?.Length -gt 1000) {
+              $success = $true
+              Write-Host "GitHub download successful"
             }
-          } else {
-            throw "playit.exe not found after download"
           }
         } catch {
-          Write-Host "Download failed: $_"
-          Write-Host "Trying alternative download..."
-          # Fallback to GitHub releases
-          curl -L -o playit.exe "https://github.com/playit-cloud/playit-agent/releases/latest/download/playit.exe"
+          Write-Host "GitHub method failed: $_"
+        }
+        
+        # Method 2: Try official download URL
+        if (-not $success) {
+          try {
+            Write-Host "Method 2: Official download URL..."
+            Remove-Item "playit.exe" -ErrorAction SilentlyContinue
+            Invoke-WebRequest -Uri "https://playit-cloud-client.releases.playit.gg/windows/playit.exe" -OutFile "playit.exe" -UseBasicParsing
+            
+            if ((Get-Item "playit.exe" -ErrorAction SilentlyContinue)?.Length -gt 1000) {
+              $success = $true
+              Write-Host "Official URL download successful"
+            }
+          } catch {
+            Write-Host "Official URL method failed: $_"
+          }
+        }
+        
+        # Method 3: Try curl with specific version
+        if (-not $success) {
+          try {
+            Write-Host "Method 3: Curl with specific version..."
+            Remove-Item "playit.exe" -ErrorAction SilentlyContinue
+            curl -L -H "Accept: application/octet-stream" -o playit.exe "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.25/playit-windows-x86_64.exe"
+            
+            if ((Get-Item "playit.exe" -ErrorAction SilentlyContinue)?.Length -gt 1000) {
+              $success = $true
+              Write-Host "Curl specific version download successful"
+            }
+          } catch {
+            Write-Host "Curl method failed: $_"
+          }
+        }
+        
+        # Verify final download
+        if (Test-Path "playit.exe") {
+          $fileInfo = Get-Item "playit.exe"
+          Write-Host "Final file size: $($fileInfo.Length) bytes"
+          
+          if ($fileInfo.Length -lt 1000) {
+            Write-Host "ERROR: File too small"
+            Get-Content "playit.exe" -Raw | Write-Host
+            exit 1
+          }
+          
+          # Check if it's actually an executable
+          $bytes = [System.IO.File]::ReadAllBytes("playit.exe")
+          if ($bytes.Length -gt 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
+            Write-Host "✓ Valid Windows PE executable detected"
+          } else {
+            Write-Host "ERROR: Not a valid Windows executable"
+            Write-Host "First few bytes: $($bytes[0..10] -join ' ')"
+            exit 1
+          }
+        } else {
+          Write-Host "ERROR: No playit.exe found after all attempts"
+          exit 1
         }
         
     - name: Create user TranAnhKhoa and configure
@@ -73,53 +142,64 @@ jobs:
         }
         
         try {
-          # Test playit.exe first
+          # Simple version test first
           Write-Host "Testing playit.exe..."
-          $testOutput = & .\playit.exe --version 2>&1
-          Write-Host "Playit version: $testOutput"
+          $versionResult = Start-Process -FilePath ".\playit.exe" -ArgumentList "--version" -Wait -PassThru -NoNewWindow -RedirectStandardOutput "version.txt" -RedirectStandardError "version_err.txt"
           
-          # Create process for login (PowerShell input redirection workaround)
-          $psi = New-Object System.Diagnostics.ProcessStartInfo
-          $psi.FileName = ".\playit.exe"
-          $psi.Arguments = "login"
-          $psi.UseShellExecute = $false
-          $psi.RedirectStandardInput = $true
-          $psi.RedirectStandardOutput = $true
-          $psi.RedirectStandardError = $true
-          $psi.CreateNoWindow = $true
+          if (Test-Path "version.txt") {
+            $version = Get-Content "version.txt" -Raw
+            Write-Host "Playit version: $version"
+          }
           
-          $process = New-Object System.Diagnostics.Process
-          $process.StartInfo = $psi
-          $process.Start()
+          if (Test-Path "version_err.txt") {
+            $versionErr = Get-Content "version_err.txt" -Raw
+            if ($versionErr) { Write-Host "Version stderr: $versionErr" }
+          }
           
-          # Send secret to stdin
-          $process.StandardInput.WriteLine($Env:PLAYIT_SECRET)
-          $process.StandardInput.Close()
+          # Login using file input method
+          Write-Host "Creating secret file..."
+          $Env:PLAYIT_SECRET | Out-File -FilePath "secret.txt" -Encoding ASCII -NoNewline
           
-          # Wait for completion with timeout
-          if ($process.WaitForExit(30000)) {
-            $output = $process.StandardOutput.ReadToEnd()
-            $error = $process.StandardError.ReadToEnd()
+          Write-Host "Attempting login..."
+          $loginResult = Start-Process -FilePath ".\playit.exe" -ArgumentList "login" -Wait -PassThru -NoNewWindow -RedirectStandardInput "secret.txt" -RedirectStandardOutput "login.txt" -RedirectStandardError "login_err.txt"
+          
+          # Check login results
+          if (Test-Path "login.txt") {
+            $loginOutput = Get-Content "login.txt" -Raw
+            Write-Host "Login output: $loginOutput"
+          }
+          
+          if (Test-Path "login_err.txt") {
+            $loginError = Get-Content "login_err.txt" -Raw
+            if ($loginError) { Write-Host "Login error: $loginError" }
+          }
+          
+          if ($loginResult.ExitCode -eq 0) {
+            Write-Host "✓ Login successful"
+          } else {
+            Write-Host "✗ Login failed with exit code: $($loginResult.ExitCode)"
             
-            Write-Host "Login output: $output"
-            if ($error) { Write-Host "Login error: $error" }
+            # Try alternative login method
+            Write-Host "Trying alternative login method..."
+            $alternativeLogin = Start-Process -FilePath ".\playit.exe" -ArgumentList "login", "--secret", $Env:PLAYIT_SECRET -Wait -PassThru -NoNewWindow -RedirectStandardOutput "alt_login.txt" -RedirectStandardError "alt_login_err.txt"
             
-            if ($process.ExitCode -eq 0) {
-              Write-Host "Login successful"
+            if ($alternativeLogin.ExitCode -eq 0) {
+              Write-Host "✓ Alternative login successful"
             } else {
-              Write-Host "Login failed with exit code: $($process.ExitCode)"
+              Write-Host "✗ All login methods failed"
+              if (Test-Path "alt_login_err.txt") {
+                Get-Content "alt_login_err.txt" | Write-Host
+              }
               exit 1
             }
-          } else {
-            Write-Host "Login timeout"
-            $process.Kill()
-            exit 1
           }
+          
+          # Clean up temporary files
+          Remove-Item "secret.txt", "version.txt", "version_err.txt", "login.txt", "login_err.txt", "alt_login.txt", "alt_login_err.txt" -ErrorAction SilentlyContinue
+          
         } catch {
-          Write-Host "Login error: $_"
-          # Fallback method
-          Write-Host "Trying fallback login method..."
-          echo $Env:PLAYIT_SECRET | .\playit.exe login
+          Write-Host "Login process error: $_"
+          exit 1
         }
       env:
         PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
