@@ -8,53 +8,88 @@ jobs:
       run: |
         Write-Host "Downloading playit.gg client..."
         
-        # Phương pháp 1: Sử dụng curl (thường hiệu quả hơn)
+        # Thử nhiều phương pháp download
+        $success = $false
+        
+        # Phương pháp 1: GitHub API
         try {
-          curl -L -H "Accept: application/octet-stream" -o playit.exe "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.4/playit.exe"
-          Write-Host "Download completed with curl"
-        } catch {
-          Write-Host "Curl failed, trying PowerShell method..."
-          # Phương pháp 2: PowerShell với headers cải tiến
-          $headers = @{
-            'User-Agent' = 'GitHub-Actions/1.0'
-            'Accept' = 'application/octet-stream'
+          Write-Host "Method 1: Using GitHub API..."
+          $apiUrl = "https://api.github.com/repos/playit-cloud/playit-agent/releases/tags/v0.15.4"
+          $release = Invoke-RestMethod -Uri $apiUrl -Headers @{'User-Agent' = 'GitHub-Actions'}
+          $asset = $release.assets | Where-Object { $_.name -eq "playit.exe" }
+          if ($asset) {
+            Write-Host "Found asset URL: $($asset.browser_download_url)"
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "playit.exe" -UseBasicParsing -Headers @{'Accept' = 'application/octet-stream'}
+            if ((Get-Item "playit.exe").Length -gt 1000) {
+              $success = $true
+              Write-Host "GitHub API download successful"
+            }
           }
-          Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.4/playit.exe" -OutFile "playit.exe" -Headers $headers -UseBasicParsing -MaximumRedirection 5
+        } catch {
+          Write-Host "GitHub API method failed: $_"
         }
         
-        # Kiểm tra file đã tải về
+        # Phương pháp 2: Direct download với curl
+        if (-not $success) {
+          try {
+            Write-Host "Method 2: Using curl with redirects..."
+            Remove-Item "playit.exe" -ErrorAction SilentlyContinue
+            curl -L -H "Accept: application/octet-stream" --max-redirs 10 -o playit.exe "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.4/playit.exe"
+            if ((Get-Item "playit.exe" -ErrorAction SilentlyContinue)?.Length -gt 1000) {
+              $success = $true
+              Write-Host "Curl download successful"
+            }
+          } catch {
+            Write-Host "Curl method failed: $_"
+          }
+        }
+        
+        # Phương pháp 3: Thử latest release
+        if (-not $success) {
+          try {
+            Write-Host "Method 3: Trying latest release..."
+            Remove-Item "playit.exe" -ErrorAction SilentlyContinue
+            $latestUrl = "https://api.github.com/repos/playit-cloud/playit-agent/releases/latest"
+            $latest = Invoke-RestMethod -Uri $latestUrl -Headers @{'User-Agent' = 'GitHub-Actions'}
+            $asset = $latest.assets | Where-Object { $_.name -eq "playit.exe" }
+            if ($asset) {
+              Write-Host "Latest version: $($latest.tag_name), URL: $($asset.browser_download_url)"
+              curl -L -H "Accept: application/octet-stream" -o playit.exe $asset.browser_download_url
+              if ((Get-Item "playit.exe" -ErrorAction SilentlyContinue)?.Length -gt 1000) {
+                $success = $true
+                Write-Host "Latest release download successful"
+              }
+            }
+          } catch {
+            Write-Host "Latest release method failed: $_"
+          }
+        }
+        
+        # Kiểm tra file cuối cùng
         if (Test-Path "playit.exe") {
           $fileInfo = Get-Item "playit.exe"
-          Write-Host "Downloaded file size: $($fileInfo.Length) bytes"
+          Write-Host "Final file size: $($fileInfo.Length) bytes"
           
-          # Kiểm tra xem có phải file HTML không
-          $content = Get-Content "playit.exe" -Raw -Encoding UTF8 -TotalCount 100
-          if ($content -match "<!DOCTYPE|<html|<HTML") {
-            Write-Host "ERROR: Downloaded file is HTML, not executable!"
-            Write-Host "Content preview:"
-            Write-Host $content.Substring(0, [Math]::Min(200, $content.Length))
-            
-            # Thử download trực tiếp từ API
-            Write-Host "Trying GitHub API method..."
-            $apiUrl = "https://api.github.com/repos/playit-cloud/playit-agent/releases/tags/v0.15.4"
-            $release = Invoke-RestMethod -Uri $apiUrl
-            $asset = $release.assets | Where-Object { $_.name -eq "playit.exe" }
-            if ($asset) {
-              Write-Host "Found asset, downloading from: $($asset.browser_download_url)"
-              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "playit.exe" -UseBasicParsing
-            }
+          if ($fileInfo.Length -lt 1000) {
+            Write-Host "ERROR: File too small, likely not a valid executable"
+            # Kiểm tra nội dung file nhỏ
+            $content = Get-Content "playit.exe" -Raw -Encoding UTF8
+            Write-Host "File content: $content"
+            exit 1
           } else {
-            Write-Host "File appears to be binary executable"
-            # Kiểm tra magic bytes của PE file (Windows executable)
-            $bytes = [System.IO.File]::ReadAllBytes("playit.exe")
-            if ($bytes.Length -gt 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
-              Write-Host "Valid PE executable detected"
+            # Kiểm tra xem có phải HTML không
+            $firstBytes = Get-Content "playit.exe" -TotalCount 5 -Encoding UTF8
+            $firstLine = $firstBytes -join ""
+            if ($firstLine -match "<!DOCTYPE|<html|<HTML") {
+              Write-Host "ERROR: Downloaded file is HTML page, not executable"
+              Write-Host "Content: $firstLine"
+              exit 1
             } else {
-              Write-Host "WARNING: File may not be a valid Windows executable"
+              Write-Host "File appears to be binary executable - OK"
             }
           }
         } else {
-          Write-Host "ERROR: playit.exe not found after download"
+          Write-Host "ERROR: playit.exe not found after all download attempts"
           exit 1
         }
         
