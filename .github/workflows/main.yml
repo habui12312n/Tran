@@ -1,0 +1,32 @@
+name: CI
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Download playit.gg client
+      run: Invoke-WebRequest https://playit-cloud-client.releases.playit.gg/windows/playit.exe -OutFile playit.exe
+
+    - name: Create user TranAnhKhoa and set password
+      run: |
+        net user TranAnhKhoa "AnhKhoa123@" /add
+        net localgroup "Remote Desktop Users" TranAnhKhoa /add
+
+    - name: Enable Remote Desktop (RDP)
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+
+    - name: Login to playit.gg
+      run: |
+        echo $Env:PLAYIT_SECRET | Out-File -Encoding ASCII secret.txt
+        .\playit.exe login < secret.txt
+      env:
+        PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+
+    - name: Start Tunnel (TCP 3389)
+      run: .\playit.exe serve
