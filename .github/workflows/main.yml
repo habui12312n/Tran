@@ -24,8 +24,25 @@ jobs:
       shell: powershell
       continue-on-error: true
 
+    - name: Verify playit.gg Agent
+      run: |
+        Write-Output "Checking playit.gg agent version..."
+        .\playit\playit.exe --version
+        Write-Output "Available commands:"
+        .\playit\playit.exe --help
+      shell: powershell
+      continue-on-error: true
+
     - name: Authenticate playit.gg
-      run: .\playit\playit.exe --secret ${{ secrets.PLAYIT_SECRET_KEY }}
+      run: |
+        try {
+          .\playit\playit.exe --secret ${{ secrets.PLAYIT_SECRET_KEY }} --check
+          Write-Output "Authentication successful."
+        } catch {
+          Write-Error "Authentication failed. Please verify the PLAYIT_SECRET_KEY in GitHub Secrets or check https://playit.gg/account."
+          exit 1
+        }
+      shell: powershell
       env:
         PLAYIT_SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
 
@@ -42,4 +59,15 @@ jobs:
       run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
 
     - name: Create Tunnel with playit.gg
-      run: Start-Process -FilePath ".\playit\playit.exe" -ArgumentList "run" -NoNewWindow
+      run: |
+        try {
+          Start-Process -FilePath ".\playit\playit.exe" -ArgumentList "run" -NoNewWindow -PassThru | Out-Null
+          Start-Sleep -Seconds 10
+          Write-Output "Checking tunnel status..."
+          $tunnelStatus = Invoke-WebRequest -Uri "https://api.playit.gg/agents/status" -Headers @{"Authorization"="Agent-Key ${{ secrets.PLAYIT_SECRET_KEY }}"} -ErrorAction Stop
+          Write-Output "Tunnel status: $($tunnelStatus.Content)"
+        } catch {
+          Write-Error "Failed to create or verify tunnel. Check playit.gg service status at https://status.playit.gg or try again later."
+          exit 1
+        }
+      shell: powershell
