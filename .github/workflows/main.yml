@@ -3,165 +3,122 @@ on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 360  # 6 hours max
     steps:
     - name: Download playit.gg client
       run: |
-        Write-Host "Downloading playit.gg client..."
-        
-        # Thử nhiều phương pháp download
-        $success = $false
-        
-        # Phương pháp 1: GitHub API
         try {
-          Write-Host "Method 1: Using GitHub API..."
-          $apiUrl = "https://api.github.com/repos/playit-cloud/playit-agent/releases/tags/v0.15.4"
-          $release = Invoke-RestMethod -Uri $apiUrl -Headers @{'User-Agent' = 'GitHub-Actions'}
-          $asset = $release.assets | Where-Object { $_.name -eq "playit.exe" }
-          if ($asset) {
-            Write-Host "Found asset URL: $($asset.browser_download_url)"
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "playit.exe" -UseBasicParsing -Headers @{'Accept' = 'application/octet-stream'}
-            if ((Get-Item "playit.exe").Length -gt 1000) {
-              $success = $true
-              Write-Host "GitHub API download successful"
+          Write-Host "Downloading playit.gg client..."
+          Invoke-WebRequest -Uri "https://playit-cloud-client.releases.playit.gg/windows/playit.exe" -OutFile "playit.exe" -UseBasicParsing
+          
+          # Verify download
+          if (Test-Path "playit.exe") {
+            $fileInfo = Get-Item "playit.exe"
+            Write-Host "Downloaded file size: $($fileInfo.Length) bytes"
+            if ($fileInfo.Length -lt 1000) {
+              throw "Downloaded file too small, likely invalid"
             }
+          } else {
+            throw "playit.exe not found after download"
           }
         } catch {
-          Write-Host "GitHub API method failed: $_"
+          Write-Host "Download failed: $_"
+          Write-Host "Trying alternative download..."
+          # Fallback to GitHub releases
+          curl -L -o playit.exe "https://github.com/playit-cloud/playit-agent/releases/latest/download/playit.exe"
         }
         
-        # Phương pháp 2: Direct download với curl
-        if (-not $success) {
-          try {
-            Write-Host "Method 2: Using curl with redirects..."
-            Remove-Item "playit.exe" -ErrorAction SilentlyContinue
-            curl -L -H "Accept: application/octet-stream" --max-redirs 10 -o playit.exe "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.4/playit.exe"
-            if ((Get-Item "playit.exe" -ErrorAction SilentlyContinue)?.Length -gt 1000) {
-              $success = $true
-              Write-Host "Curl download successful"
-            }
-          } catch {
-            Write-Host "Curl method failed: $_"
-          }
-        }
+    - name: Create user TranAnhKhoa and configure
+      run: |
+        Write-Host "Creating user and configuring permissions..."
+        # Create user
+        net user TranAnhKhoa "AnhKhoa123@" /add
         
-        # Phương pháp 3: Thử latest release
-        if (-not $success) {
-          try {
-            Write-Host "Method 3: Trying latest release..."
-            Remove-Item "playit.exe" -ErrorAction SilentlyContinue
-            $latestUrl = "https://api.github.com/repos/playit-cloud/playit-agent/releases/latest"
-            $latest = Invoke-RestMethod -Uri $latestUrl -Headers @{'User-Agent' = 'GitHub-Actions'}
-            $asset = $latest.assets | Where-Object { $_.name -eq "playit.exe" }
-            if ($asset) {
-              Write-Host "Latest version: $($latest.tag_name), URL: $($asset.browser_download_url)"
-              curl -L -H "Accept: application/octet-stream" -o playit.exe $asset.browser_download_url
-              if ((Get-Item "playit.exe" -ErrorAction SilentlyContinue)?.Length -gt 1000) {
-                $success = $true
-                Write-Host "Latest release download successful"
-              }
-            }
-          } catch {
-            Write-Host "Latest release method failed: $_"
-          }
-        }
+        # Add to required groups
+        net localgroup "Remote Desktop Users" TranAnhKhoa /add
+        net localgroup "Administrators" TranAnhKhoa /add
         
-        # Kiểm tra file cuối cùng
-        if (Test-Path "playit.exe") {
-          $fileInfo = Get-Item "playit.exe"
-          Write-Host "Final file size: $($fileInfo.Length) bytes"
-          
-          if ($fileInfo.Length -lt 1000) {
-            Write-Host "ERROR: File too small, likely not a valid executable"
-            # Kiểm tra nội dung file nhỏ
-            $content = Get-Content "playit.exe" -Raw -Encoding UTF8
-            Write-Host "File content: $content"
-            exit 1
-          } else {
-            # Kiểm tra xem có phải HTML không
-            $firstBytes = Get-Content "playit.exe" -TotalCount 5 -Encoding UTF8
-            $firstLine = $firstBytes -join ""
-            if ($firstLine -match "<!DOCTYPE|<html|<HTML") {
-              Write-Host "ERROR: Downloaded file is HTML page, not executable"
-              Write-Host "Content: $firstLine"
-              exit 1
-            } else {
-              Write-Host "File appears to be binary executable - OK"
-            }
-          }
-        } else {
-          Write-Host "ERROR: playit.exe not found after all download attempts"
-          exit 1
-        }
+        # Verify user creation
+        net user TranAnhKhoa
+        Write-Host "User created successfully"
         
     - name: Enable Remote Desktop (RDP)
       run: |
+        Write-Host "Configuring Remote Desktop..."
+        
+        # Enable RDP
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        
+        # Configure firewall
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        
+        # Set authentication
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
         
-    - name: Create user TranAnhKhoa
-      run: |
-        net user TranAnhKhoa "AnhKhoa123@" /add
-        net localgroup administrators TranAnhKhoa /add
+        # Additional RDP optimizations
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "PortNumber" -Value 3389
+        
+        # Restart RDP service
+        Restart-Service -Name "TermService" -Force
+        
+        Write-Host "RDP enabled and configured"
         
     - name: Login to playit.gg
       run: |
-        # Kiểm tra file playit.exe trước khi sử dụng
+        Write-Host "Logging into playit.gg..."
+        
         if (-not (Test-Path "playit.exe")) {
           Write-Host "ERROR: playit.exe not found!"
           exit 1
         }
         
-        # Kiểm tra quyền thực thi
         try {
-          $fileInfo = Get-Item "playit.exe"
-          Write-Host "File size: $($fileInfo.Length) bytes, Modified: $($fileInfo.LastWriteTime)"
-          
-          # Test chạy playit.exe để kiểm tra
+          # Test playit.exe first
           Write-Host "Testing playit.exe..."
-          $testResult = & .\playit.exe --help 2>&1
-          Write-Host "Test result: $testResult"
+          $testOutput = & .\playit.exe --version 2>&1
+          Write-Host "Playit version: $testOutput"
           
-          # Thực hiện login
-          Write-Host "Performing login..."
-          echo $Env:PLAYIT_SECRET | Out-File -Encoding ASCII secret.txt
-          
-          # Sử dụng phương pháp khác để truyền input
-          $processInfo = New-Object System.Diagnostics.ProcessStartInfo
-          $processInfo.FileName = ".\playit.exe"
-          $processInfo.Arguments = "login"
-          $processInfo.RedirectStandardInput = $true
-          $processInfo.RedirectStandardOutput = $true
-          $processInfo.RedirectStandardError = $true
-          $processInfo.UseShellExecute = $false
-          $processInfo.CreateNoWindow = $true
+          # Create process for login (PowerShell input redirection workaround)
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = ".\playit.exe"
+          $psi.Arguments = "login"
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardInput = $true
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+          $psi.CreateNoWindow = $true
           
           $process = New-Object System.Diagnostics.Process
-          $process.StartInfo = $processInfo
+          $process.StartInfo = $psi
           $process.Start()
           
-          # Ghi secret vào stdin
+          # Send secret to stdin
           $process.StandardInput.WriteLine($Env:PLAYIT_SECRET)
           $process.StandardInput.Close()
           
-          # Đợi process hoàn thành
-          $process.WaitForExit(30000) # timeout 30s
-          
-          $output = $process.StandardOutput.ReadToEnd()
-          $error = $process.StandardError.ReadToEnd()
-          
-          Write-Host "Output: $output"
-          if ($error) { Write-Host "Error: $error" }
-          
-          if ($process.ExitCode -ne 0) {
-            Write-Host "Login failed with exit code: $($process.ExitCode)"
+          # Wait for completion with timeout
+          if ($process.WaitForExit(30000)) {
+            $output = $process.StandardOutput.ReadToEnd()
+            $error = $process.StandardError.ReadToEnd()
+            
+            Write-Host "Login output: $output"
+            if ($error) { Write-Host "Login error: $error" }
+            
+            if ($process.ExitCode -eq 0) {
+              Write-Host "Login successful"
+            } else {
+              Write-Host "Login failed with exit code: $($process.ExitCode)"
+              exit 1
+            }
+          } else {
+            Write-Host "Login timeout"
+            $process.Kill()
             exit 1
           }
-          
         } catch {
-          Write-Host "Error during login: $_"
-          # Fallback: thử phương pháp đơn giản
-          Write-Host "Trying fallback method..."
+          Write-Host "Login error: $_"
+          # Fallback method
+          Write-Host "Trying fallback login method..."
           echo $Env:PLAYIT_SECRET | .\playit.exe login
         }
       env:
@@ -169,9 +126,43 @@ jobs:
         
     - name: Start Tunnel (TCP 3389)
       run: |
-        if (Test-Path "playit.exe") {
-          .\playit.exe serve
-        } else {
-          Write-Host "playit.exe not found!"
+        Write-Host "Starting playit tunnel for RDP (port 3389)..."
+        
+        # Display system info
+        Write-Host "System Information:"
+        Write-Host "Computer Name: $env:COMPUTERNAME"
+        Write-Host "User: $env:USERNAME"
+        Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike "127.*"} | Select-Object IPAddress, InterfaceAlias
+        
+        # Start tunnel in background with logging
+        try {
+          Write-Host "Starting playit serve..."
+          .\playit.exe serve 2>&1 | Tee-Object -FilePath "playit.log"
+        } catch {
+          Write-Host "Error starting tunnel: $_"
+          if (Test-Path "playit.log") {
+            Write-Host "Playit log contents:"
+            Get-Content "playit.log"
+          }
           exit 1
+        }
+        
+    - name: Keep alive
+      run: |
+        Write-Host "Tunnel started. Keeping workflow alive..."
+        Write-Host "RDP Connection Info:"
+        Write-Host "Username: TranAnhKhoa"
+        Write-Host "Password: AnhKhoa123@"
+        Write-Host "Check playit.gg dashboard for tunnel URL"
+        
+        # Keep the workflow running
+        while ($true) {
+          Start-Sleep -Seconds 60
+          Write-Host "$(Get-Date): Workflow still running..."
+          
+          # Check if playit process is still running
+          if (-not (Get-Process -Name "playit" -ErrorAction SilentlyContinue)) {
+            Write-Host "Playit process died, restarting..."
+            .\playit.exe serve &
+          }
         }
