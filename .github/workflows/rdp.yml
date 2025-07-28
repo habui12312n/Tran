@@ -1,0 +1,142 @@
+name: CI
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - name: Download playit.gg client
+      run: |
+        Write-Host "Downloading playit.gg client..."
+        
+        # Phương pháp 1: Sử dụng curl (thường hiệu quả hơn)
+        try {
+          curl -L -H "Accept: application/octet-stream" -o playit.exe "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.4/playit.exe"
+          Write-Host "Download completed with curl"
+        } catch {
+          Write-Host "Curl failed, trying PowerShell method..."
+          # Phương pháp 2: PowerShell với headers cải tiến
+          $headers = @{
+            'User-Agent' = 'GitHub-Actions/1.0'
+            'Accept' = 'application/octet-stream'
+          }
+          Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.4/playit.exe" -OutFile "playit.exe" -Headers $headers -UseBasicParsing -MaximumRedirection 5
+        }
+        
+        # Kiểm tra file đã tải về
+        if (Test-Path "playit.exe") {
+          $fileInfo = Get-Item "playit.exe"
+          Write-Host "Downloaded file size: $($fileInfo.Length) bytes"
+          
+          # Kiểm tra xem có phải file HTML không
+          $content = Get-Content "playit.exe" -Raw -Encoding UTF8 -TotalCount 100
+          if ($content -match "<!DOCTYPE|<html|<HTML") {
+            Write-Host "ERROR: Downloaded file is HTML, not executable!"
+            Write-Host "Content preview:"
+            Write-Host $content.Substring(0, [Math]::Min(200, $content.Length))
+            
+            # Thử download trực tiếp từ API
+            Write-Host "Trying GitHub API method..."
+            $apiUrl = "https://api.github.com/repos/playit-cloud/playit-agent/releases/tags/v0.15.4"
+            $release = Invoke-RestMethod -Uri $apiUrl
+            $asset = $release.assets | Where-Object { $_.name -eq "playit.exe" }
+            if ($asset) {
+              Write-Host "Found asset, downloading from: $($asset.browser_download_url)"
+              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "playit.exe" -UseBasicParsing
+            }
+          } else {
+            Write-Host "File appears to be binary executable"
+            # Kiểm tra magic bytes của PE file (Windows executable)
+            $bytes = [System.IO.File]::ReadAllBytes("playit.exe")
+            if ($bytes.Length -gt 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) {
+              Write-Host "Valid PE executable detected"
+            } else {
+              Write-Host "WARNING: File may not be a valid Windows executable"
+            }
+          }
+        } else {
+          Write-Host "ERROR: playit.exe not found after download"
+          exit 1
+        }
+        
+    - name: Enable Remote Desktop (RDP)
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+        
+    - name: Create user TranAnhKhoa
+      run: |
+        net user TranAnhKhoa "AnhKhoa123@" /add
+        net localgroup administrators TranAnhKhoa /add
+        
+    - name: Login to playit.gg
+      run: |
+        # Kiểm tra file playit.exe trước khi sử dụng
+        if (-not (Test-Path "playit.exe")) {
+          Write-Host "ERROR: playit.exe not found!"
+          exit 1
+        }
+        
+        # Kiểm tra quyền thực thi
+        try {
+          $fileInfo = Get-Item "playit.exe"
+          Write-Host "File size: $($fileInfo.Length) bytes, Modified: $($fileInfo.LastWriteTime)"
+          
+          # Test chạy playit.exe để kiểm tra
+          Write-Host "Testing playit.exe..."
+          $testResult = & .\playit.exe --help 2>&1
+          Write-Host "Test result: $testResult"
+          
+          # Thực hiện login
+          Write-Host "Performing login..."
+          echo $Env:PLAYIT_SECRET | Out-File -Encoding ASCII secret.txt
+          
+          # Sử dụng phương pháp khác để truyền input
+          $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+          $processInfo.FileName = ".\playit.exe"
+          $processInfo.Arguments = "login"
+          $processInfo.RedirectStandardInput = $true
+          $processInfo.RedirectStandardOutput = $true
+          $processInfo.RedirectStandardError = $true
+          $processInfo.UseShellExecute = $false
+          $processInfo.CreateNoWindow = $true
+          
+          $process = New-Object System.Diagnostics.Process
+          $process.StartInfo = $processInfo
+          $process.Start()
+          
+          # Ghi secret vào stdin
+          $process.StandardInput.WriteLine($Env:PLAYIT_SECRET)
+          $process.StandardInput.Close()
+          
+          # Đợi process hoàn thành
+          $process.WaitForExit(30000) # timeout 30s
+          
+          $output = $process.StandardOutput.ReadToEnd()
+          $error = $process.StandardError.ReadToEnd()
+          
+          Write-Host "Output: $output"
+          if ($error) { Write-Host "Error: $error" }
+          
+          if ($process.ExitCode -ne 0) {
+            Write-Host "Login failed with exit code: $($process.ExitCode)"
+            exit 1
+          }
+          
+        } catch {
+          Write-Host "Error during login: $_"
+          # Fallback: thử phương pháp đơn giản
+          Write-Host "Trying fallback method..."
+          echo $Env:PLAYIT_SECRET | .\playit.exe login
+        }
+      env:
+        PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+        
+    - name: Start Tunnel (TCP 3389)
+      run: |
+        if (Test-Path "playit.exe") {
+          .\playit.exe serve
+        } else {
+          Write-Host "playit.exe not found!"
+          exit 1
+        }
