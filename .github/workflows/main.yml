@@ -26,10 +26,17 @@ jobs:
 
     - name: Kiểm tra playit.gg Agent
       run: |
-        Write-Output "Kiểm tra phiên bản playit.gg agent..."
-        .\playit\playit.exe --version
-        Write-Output "Các lệnh khả dụng:"
-        .\playit\playit.exe --help
+        Write-Output "Kiểm tra file playit.exe..."
+        if (Test-Path ".\playit\playit.exe") {
+          Write-Output "File playit.exe tồn tại."
+          Write-Output "Kiểm tra phiên bản playit.gg agent..."
+          .\playit\playit.exe --version
+          Write-Output "Các lệnh khả dụng:"
+          .\playit\playit.exe --help
+        } else {
+          Write-Error "File playit.exe không tồn tại trong thư mục playit."
+          exit 1
+        }
       shell: powershell
       continue-on-error: true
 
@@ -37,16 +44,20 @@ jobs:
       run: |
         try {
           Write-Output "Khởi động playit.gg agent với xác thực..."
-          Start-Job -ScriptBlock {
-            Start-Process -FilePath ".\playit\playit.exe" -ArgumentList "--secret ${{ secrets.PLAYIT_SECRET_KEY }} run" -NoNewWindow -RedirectStandardOutput "tunnel_output.txt" -RedirectStandardError "tunnel_error.txt"
+          Start-Job -Name PlayitJob -ScriptBlock {
+            $env:PLAYIT_SECRET_KEY = "${{ secrets.PLAYIT_SECRET_KEY }}"
+            Start-Process -FilePath ".\playit\playit.exe" -ArgumentList "--secret $env:PLAYIT_SECRET_KEY run" -NoNewWindow -RedirectStandardOutput "tunnel_output.txt" -RedirectStandardError "tunnel_error.txt"
           } | Out-Null
-          Start-Sleep -Seconds 15
+          Start-Sleep -Seconds 20
+          Write-Output "Kiểm tra trạng thái job..."
+          $job = Get-Job -Name PlayitJob
+          Write-Output "Trạng thái job: $($job.State)"
           Write-Output "Đầu ra tunnel:"
           Get-Content tunnel_output.txt -ErrorAction SilentlyContinue
           Write-Output "Lỗi tunnel (nếu có):"
           Get-Content tunnel_error.txt -ErrorAction SilentlyContinue
           if (Test-Path "tunnel_output.txt") {
-            $output = Get-Content tunnel_output.txt -Raw
+            $output = Get-Content tunnel_output.txt -Raw -ErrorAction SilentlyContinue
             if ($output -match "tunnel running") {
               Write-Output "Tunnel khởi động thành công."
             } else {
