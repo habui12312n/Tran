@@ -40,11 +40,23 @@ jobs:
           Start-Job -ScriptBlock {
             Start-Process -FilePath ".\playit\playit.exe" -ArgumentList "--secret ${{ secrets.PLAYIT_SECRET_KEY }} run" -NoNewWindow -RedirectStandardOutput "tunnel_output.txt" -RedirectStandardError "tunnel_error.txt"
           } | Out-Null
-          Start-Sleep -Seconds 10
+          Start-Sleep -Seconds 15
           Write-Output "Đầu ra tunnel:"
           Get-Content tunnel_output.txt -ErrorAction SilentlyContinue
           Write-Output "Lỗi tunnel (nếu có):"
           Get-Content tunnel_error.txt -ErrorAction SilentlyContinue
+          if (Test-Path "tunnel_output.txt") {
+            $output = Get-Content tunnel_output.txt -Raw
+            if ($output -match "tunnel running") {
+              Write-Output "Tunnel khởi động thành công."
+            } else {
+              Write-Error "Tunnel không khởi động đúng. Kiểm tra tunnel_error.txt."
+              exit 1
+            }
+          } else {
+            Write-Error "Không tìm thấy tunnel_output.txt. Tunnel có thể không khởi động."
+            exit 1
+          }
         } catch {
           Write-Error "Tạo tunnel thất bại: $_"
           Get-Content tunnel_error.txt -ErrorAction SilentlyContinue
@@ -65,17 +77,3 @@ jobs:
 
     - name: Đặt mật khẩu người dùng cục bộ
       run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
-
-    - name: Kiểm tra trạng thái Tunnel
-      run: |
-        try {
-          Write-Output "Kiểm tra trạng thái tunnel qua API playit.gg..."
-          $tunnelStatus = Invoke-WebRequest -Uri "https://api.playit.gg/agents/status" -Headers @{"Authorization"="Agent-Key ${{ secrets.PLAYIT_SECRET_KEY }}"} -ErrorAction Stop
-          Write-Output "Trạng thái tunnel: $($tunnelStatus.Content)"
-        } catch {
-          Write-Error "Kiểm tra trạng thái tunnel thất bại: $_"
-          exit 1
-        }
-      shell: powershell
-      env:
-        PLAYIT_SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
