@@ -24,35 +24,8 @@ jobs:
       shell: powershell
       continue-on-error: true
 
-    - name: Verify playit.gg Agent
-      run: |
-        Write-Output "Checking playit.gg agent version..."
-        .\playit\playit.exe --version
-        Write-Output "Available commands:"
-        .\playit\playit.exe --help
-      shell: powershell
-      continue-on-error: true
-      env:
-        PLAYIT_SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
-
     - name: Authenticate playit.gg
-      run: |
-        try {
-          Write-Output "Attempting authentication with playit.gg..."
-          .\playit\playit.exe --secret ${{ secrets.PLAYIT_SECRET_KEY }} > auth_output.txt 2>&1
-          Get-Content auth_output.txt
-          if ($LASTEXITCODE -eq 0) {
-            Write-Output "Authentication successful."
-          } else {
-            Write-Error "Authentication failed. Check the PLAYIT_SECRET_KEY or playit.gg service status."
-            exit 1
-          }
-        } catch {
-          Write-Error "Authentication command failed: $_"
-          Get-Content auth_output.txt
-          exit 1
-        }
-      shell: powershell
+      run: .\playit\playit.exe --secret ${{ secrets.PLAYIT_SECRET_KEY }}
       env:
         PLAYIT_SECRET_KEY: ${{ secrets.PLAYIT_SECRET_KEY }}
 
@@ -69,21 +42,4 @@ jobs:
       run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
 
     - name: Create Tunnel with playit.gg
-      run: |
-        try {
-          Write-Output "Starting playit.gg tunnel..."
-          Start-Process -FilePath ".\playit\playit.exe" -ArgumentList "run" -NoNewWindow -PassThru -RedirectStandardOutput "tunnel_output.txt" -RedirectStandardError "tunnel_error.txt" | Out-Null
-          Start-Sleep -Seconds 10
-          Write-Output "Tunnel output:"
-          Get-Content tunnel_output.txt
-          Write-Output "Tunnel errors (if any):"
-          Get-Content tunnel_error.txt
-          Write-Output "Checking tunnel status..."
-          $tunnelStatus = Invoke-WebRequest -Uri "https://api.playit.gg/agents/status" -Headers @{"Authorization"="Agent-Key ${{ secrets.PLAYIT_SECRET_KEY }}"} -ErrorAction Stop
-          Write-Output "Tunnel status: $($tunnelStatus.Content)"
-        } catch {
-          Write-Error "Failed to create or verify tunnel: $_"
-          Get-Content tunnel_error.txt
-          exit 1
-        }
-      shell: powershell
+      run: Start-Process -FilePath ".\playit\playit.exe" -ArgumentList "run" -NoNewWindow
